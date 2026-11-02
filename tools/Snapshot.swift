@@ -3,8 +3,9 @@ import ImageIO
 import MetalKit
 import UniformTypeIdentifiers
 
-/// Renders one frame of the wallpaper to a PNG, without a window.
+/// Renders frames of the wallpaper to PNGs, without a window.
 /// Usage: snapshot --seed 5 --seconds 60 --width 3360 --height 2100 --out frame.png
+/// With --frames 600 --fps 30, writes frame-0000.png onwards beside --out, for a clip.
 @main struct Snapshot {
     enum Failure: Error { case unavailable(String) }
 
@@ -19,6 +20,8 @@ import UniformTypeIdentifiers
         let width = value("--width").flatMap(Int.init) ?? 3360
         let height = value("--height").flatMap(Int.init) ?? 2100
         let out = URL(fileURLWithPath: value("--out") ?? "snapshot.png")
+        let frames = max(1, value("--frames").flatMap(Int.init) ?? 1)
+        let fps = value("--fps").flatMap(Float.init) ?? 30
         let resources = URL(fileURLWithPath: value("--resources") ?? "build/Build/Products/Release/SpaceWallpaper.app/Contents/Resources")
 
         guard let device = MTLCreateSystemDefaultDevice() else { throw Failure.unavailable("Metal") }
@@ -28,9 +31,12 @@ import UniformTypeIdentifiers
         guard let renderer = Renderer(view: view, seed: seed, resourceDirectory: resources),
               let target = PlanetTexture.make(device: device, width: width, height: height) else { throw Failure.unavailable("Renderer") }
         renderer.seek(to: seconds)
-        guard let frame = renderer.renderOffscreen(into: target, delta: 0) else { throw Failure.unavailable("Frame") }
-        frame.waitUntilCompleted()
-        try save(target, device: device, to: out)
+        for index in 0..<frames {
+            guard let frame = renderer.renderOffscreen(into: target, delta: index == 0 ? 0 : 1 / fps) else { throw Failure.unavailable("Frame") }
+            frame.waitUntilCompleted()
+            let file = frames == 1 ? out : out.deletingLastPathComponent().appendingPathComponent(String(format: "frame-%04d.png", index))
+            try save(target, device: device, to: file)
+        }
         print(out.path)
     }
 
