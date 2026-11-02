@@ -21,13 +21,17 @@ struct DustScroll {
     float opacity;
     int cloudCount;
     float2 churn;
+    float2 secondOffset;
+    float2 gridShift;
     Cloud clouds[3];
 };
 
 constant int dustOctaves = 4;
 constant float softness = 0.28;
 constant float churnScale = 0.5;
-constant float churnCounter = 1.6;
+// Art pixels per cloud pixel, matching the planets, and how many shades a cloud steps through.
+constant float cloudPixel = 3.0;
+constant float cloudShades = 3.0;
 constant float bayer[16] = {
     0, 8, 2, 10,
     12, 4, 14, 6,
@@ -74,10 +78,12 @@ fragment float4 dust_bake_fragment(PlanetVertexOut in [[stage_in]], constant Dus
     return float4(thickness, smoothstep(0.3, 0.7, blend), 0.0, 1.0);
 }
 
-// Thick only inside a cloud's reach, thinning towards its edge, with a touch of dither to hide steps.
+// Thick only inside a cloud's reach, thinning towards its edge, in coarse pixels and a few dithered shades.
 fragment float4 dust_scroll_fragment(PlanetVertexOut in [[stage_in]], constant DustScroll &p [[buffer(0)]], texture2d<float> texture [[texture(0)]]) {
     constexpr sampler soft(filter::linear, address::repeat);
-    float2 art = in.uv * p.view;
+    // The pixel grid travels with the cloud, so its edges don't crawl as it passes.
+    float2 cell = floor((in.uv * p.view + p.gridShift) / cloudPixel);
+    float2 art = (cell + 0.5) * cloudPixel - p.gridShift;
     float reach = 0.0;
     float3 tintA = float3(0.0);
     float3 tintB = float3(0.0);
@@ -97,13 +103,15 @@ fragment float4 dust_scroll_fragment(PlanetVertexOut in [[stage_in]], constant D
     }
     tintA /= totalWeight;
     tintB /= totalWeight;
-    float2 uv = in.uv * p.viewOverTexture + p.offset;
-    float4 baked = texture.sample(soft, uv + p.churn);
+    float2 onTexture = art / p.view * p.viewOverTexture;
+    float4 baked = texture.sample(soft, onTexture + p.offset + p.churn);
     // A second, larger copy sliding the other way, so the cloud's shape slowly changes as well as its place.
-    float4 second = texture.sample(soft, uv * churnScale - p.churn * churnCounter);
+    float4 second = texture.sample(soft, onTexture * churnScale + p.secondOffset);
     baked.r *= 0.35 + second.r * 1.3;
-    int2 cell = int2(in.position.xy) % 4;
-    float dither = (bayer[cell.y * 4 + cell.x] / 16.0 - 0.5) * (2.0 / 255.0);
-    float alpha = baked.r * reach * p.opacity;
-    return float4(mix(tintA, tintB, baked.g), max(alpha + dither, 0.0));
+    int2 at = int2(glsl_mod(cell, float2(4.0)));
+    float dither = bayer[at.y * 4 + at.x] / 16.0;
+    // Each pixel steps up at its own point, so a cloud thickens pixel by pixel rather than in sudden bands.
+    float shade = min(floor(baked.r * reach * cloudShades + dither), cloudShades) / cloudShades;
+    float blend = step(0.5, baked.g + (dither - 0.5) * 0.3);
+    return float4(mix(tintA, tintB, blend), shade * p.opacity);
 }

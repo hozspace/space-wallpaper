@@ -23,6 +23,8 @@ private struct DustScroll {
     var opacity: Float
     var cloudCount: Int32
     var churn: SIMD2<Float>
+    var secondOffset: SIMD2<Float>
+    var gridShift: SIMD2<Float>
     var clouds: (Cloud, Cloud, Cloud)
 }
 
@@ -54,6 +56,11 @@ final class DustClouds {
     private static let mostClouds = 3
     /// Art pixels a second the shapes churn by, whatever the ship is doing.
     private static let churnSpeed = SIMD2<Double>(5, 3)
+    /// The second copy is this much larger, and churns this much faster the other way.
+    private static let secondScale = 0.5
+    private static let secondChurn = -1.6
+    /// Matches `cloudPixel` in the shader.
+    private static let cloudPixel = 3.0
 
     private let device: MTLDevice
     private let bake: MTLRenderPipelineState
@@ -71,7 +78,7 @@ final class DustClouds {
         self.bake = bake
         self.scroll = scroll
         specs = [
-            Spec(cells: SIMD2(6, 4), cover: 0.38, parallax: 0.7, opacity: 0.23, seed: Float.random(in: 0...100, using: &random), texture: nil),
+            Spec(cells: SIMD2(6, 4), cover: 0.38, parallax: 0.7, opacity: 0.2, seed: Float.random(in: 0...100, using: &random), texture: nil),
             Spec(cells: SIMD2(9, 6), cover: 0.5, parallax: 1.2, opacity: 0.035, seed: Float.random(in: 0...100, using: &random), texture: nil),
         ]
     }
@@ -122,10 +129,16 @@ final class DustClouds {
         let moved = (flight.camera * spec.parallax) / across
         let wrapped = moved - moved.rounded(.down)
         let churned = Self.churnSpeed * time / across
+        // Each copy wraps on its own tile, so neither jumps when the other comes round.
+        let second = moved * Self.secondScale + churned * Self.secondChurn
+        let travelled = flight.camera * spec.parallax
         var params = DustScroll(
             viewOverTexture: SIMD2(repeating: 1 / Self.screensAcross), offset: SIMD2<Float>(wrapped), view: view,
             opacity: spec.opacity, cloudCount: Int32(clouds.count),
-            churn: SIMD2<Float>(churned - churned.rounded(.down)), clouds: (slots[0], slots[1], slots[2])
+            churn: SIMD2<Float>(churned - churned.rounded(.down)),
+            secondOffset: SIMD2<Float>(second - second.rounded(.down)),
+            gridShift: SIMD2<Float>(travelled - Self.cloudPixel * (travelled / Self.cloudPixel).rounded(.down)),
+            clouds: (slots[0], slots[1], slots[2])
         )
         encoder.setRenderPipelineState(scroll)
         encoder.setFragmentBytes(&params, length: MemoryLayout<DustScroll>.stride, index: 0)

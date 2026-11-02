@@ -22,6 +22,8 @@ final class Renderer: NSObject, MTKViewDelegate {
     private let rocketTexture: MTLTexture
     private let planets: PlanetField
     private let stars: StarField
+    private let sights: Sights
+    private let shootingStars: ShootingStars
     private let dust: DustClouds
     private let speedDust: SpeedDust
     private let flight: Flight
@@ -45,6 +47,8 @@ final class Renderer: NSObject, MTKViewDelegate {
               let flamePipeline = Pipelines.make(device: device, library: library, vertex: "rotated_sprite_vertex", fragment: "flames_fragment"),
               let planetPipelines = PlanetPipelines(device: device, library: library),
               let stars = StarField(device: device, library: library, seed: seed),
+              let sights = Sights(device: device, library: library, seed: seed),
+              let shootingStars = ShootingStars(device: device, library: library, seed: seed),
               let dust = DustClouds(device: device, library: library, seed: seed),
               let speedDust = SpeedDust(device: device, library: library, seed: seed),
               let url = resourceDirectory?.appendingPathComponent("rocket.png") ?? Bundle.main.url(forResource: "rocket", withExtension: "png"),
@@ -56,6 +60,8 @@ final class Renderer: NSObject, MTKViewDelegate {
         rocketTexture = texture
         planets = PlanetField(device: device, pipelines: planetPipelines, seed: seed)
         self.stars = stars
+        self.sights = sights
+        self.shootingStars = shootingStars
         self.dust = dust
         self.speedDust = speedDust
         flight = Flight(journey: journey, viewWidth: viewWidth)
@@ -121,7 +127,9 @@ final class Renderer: NSObject, MTKViewDelegate {
         if animatePlanets { untilPlanetRedraw = Self.planetSecondsPerRedraw }
         planets.redraw(shown, view: artView, into: buffer, animate: animatePlanets)
         guard let encoder = buffer.makeRenderCommandEncoder(descriptor: pass) else { return }
-        stars.draw(with: encoder, view: artView, camera: flight.camera, artPixel: Self.artPixel)
+        stars.draw(with: encoder, view: artView, camera: flight.camera, artPixel: Self.artPixel, time: clock)
+        sights.draw(with: encoder, view: artView, camera: flight.camera, artPixel: Self.artPixel, time: clock)
+        shootingStars.draw(with: encoder, screen: screen, artPixel: Self.artPixel, time: clock)
         dust.draw(.behind, flight: flight, with: encoder, view: artView, time: Double(clock))
         encoder.setRenderPipelineState(spritePipeline)
         for item in shown { drawPlanet(item, with: encoder, screen: screen) }
