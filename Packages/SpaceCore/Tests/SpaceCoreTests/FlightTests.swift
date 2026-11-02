@@ -390,17 +390,17 @@ private let frame = 1.0 / 30.0
     ]
 
     @Test func madeUpPalettesFitEachKindsShaders() {
-        for (kind, count) in Self.layout {
+        for (kind, count) in Self.layout where !kind.mixesMaterials {
             for seed in UInt64(0)..<50 {
                 let colours = PlanetPaint.generated(seed: seed).colours(for: kind) ?? []
                 #expect(colours.count == count)
-                #expect(colours.allSatisfy { all($0 .>= 0) && all($0 .<= 1) && HSV($0).saturation <= 0.72 + 0.0001 })
+                #expect(colours.allSatisfy { all($0 .>= 0) && all($0 .<= 1) && HSV($0).saturation <= PlanetPaint.mostSaturation + 0.0001 })
             }
         }
     }
 
     @Test func aWorldsColoursStayCloseInHue() {
-        for kind in Self.layout.keys {
+        for kind in Self.layout.keys where !kind.mixesMaterials {
             for seed in UInt64(0)..<50 {
                 let colours = PlanetPaint.generated(seed: seed).colours(for: kind) ?? []
                 let main = HSV(colours[0]).hue
@@ -409,8 +409,14 @@ private let frame = 1.0 / 30.0
         }
     }
 
+    @Test func landSeaAndCloudWorldsAreTurnedNotMadeUp() {
+        for kind in [PlaceKind.lava, .ocean, .earthLike, .ice] {
+            #expect(PlanetPaint.generated(seed: 3).colours(for: kind) == nil)
+        }
+    }
+
     @Test func eachKindKeepsToItsColourRange() {
-        for kind in Self.layout.keys {
+        for kind in Self.layout.keys where !kind.mixesMaterials {
             for seed in UInt64(0)..<50 {
                 let main = PlanetPaint.generated(seed: seed).colours(for: kind)![0]
                 #expect(HSV(main).saturation < 0.02 || kind.hueRange.contains(HSV(main).hue))
@@ -419,6 +425,7 @@ private let frame = 1.0 / 30.0
     }
 
     @Test func sameSeedSamePalette() {
+        #expect(PlanetPaint.generated(seed: 7).colours(for: .desert) != nil)
         #expect(PlanetPaint.generated(seed: 7).colours(for: .desert) == PlanetPaint.generated(seed: 7).colours(for: .desert))
         #expect(PlanetPaint.generated(seed: 7).colours(for: .desert) != PlanetPaint.generated(seed: 8).colours(for: .desert))
     }

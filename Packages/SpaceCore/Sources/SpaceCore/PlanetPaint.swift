@@ -11,9 +11,9 @@ public enum PlanetPaint: Sendable, Equatable {
     static let chanceOfGenerated = 0.6
     static let chanceOfShifted = 0.5
     /// Fully saturated palettes look like sweets, so they're held back a little.
-    static let mostSaturation = 0.72
+    static let mostSaturation = 0.62
     /// PixelPlanets will put pink ground beside green rivers; held this close to the main hue, a world hangs together.
-    static let widestHueSpread = 0.2
+    static let widestHueSpread = 0.08
 
     static func hueOffset(from: Double, to: Double) -> Double {
         let raw = to - from
@@ -30,9 +30,16 @@ public enum PlanetPaint: Sendable, Equatable {
         return .preset
     }
 
+    /// Worlds of land, sea and cloud keep their preset's balance of colours, only turned:
+    /// made up from scratch, their parts clash.
+    private func effective(for kind: PlaceKind) -> PlanetPaint {
+        guard case .generated(let seed) = self, kind.mixesMaterials else { return self }
+        return .shifted(hue: Double(seed % 1000) / 1000 - 0.5)
+    }
+
     /// Colours in the order the kind's shaders take them, or nil to use a preset.
     public func colours(for kind: PlaceKind) -> [SIMD3<Double>]? {
-        guard case .generated(let seed) = self else { return nil }
+        guard case .generated(let seed) = effective(for: kind) else { return nil }
         var random = SeededRandom(seed: seed)
         guard let made = PaletteMaker.colours(for: kind, using: &random), let main = made.first else { return nil }
         let mainHue = HSV(main).hue
@@ -46,14 +53,14 @@ public enum PlanetPaint: Sendable, Equatable {
 
     /// A preset turned so its main colour lands somewhere in the kind's range; unchanged unless shifted.
     public func turned(_ preset: [SIMD3<Double>], for kind: PlaceKind) -> [SIMD3<Double>] {
-        guard case .shifted(let roll) = self, let main = preset.first else { return preset }
+        guard case .shifted(let roll) = effective(for: kind), let main = preset.first else { return preset }
         let turn = kind.hueRange.pick(roll + 0.5) - HSV(main).hue
         return preset.map { HSV($0).turned(by: turn).rgb }
     }
 
     /// The hue of the colour that covers most of the world, if it has much colour at all.
     public func mainHue(for kind: PlaceKind) -> Double? {
-        switch self {
+        switch effective(for: kind) {
         case .preset:
             return nil
         case .shifted(let roll):
@@ -89,6 +96,13 @@ public struct HueRange: Sendable {
 }
 
 extension PlaceKind {
+    var mixesMaterials: Bool {
+        switch self {
+        case .lava, .ocean, .earthLike, .ice: true
+        default: false
+        }
+    }
+
     /// Where on the colour wheel each kind's main colour may sit, so a world still looks like its kind.
     public var hueRange: HueRange {
         switch self {
