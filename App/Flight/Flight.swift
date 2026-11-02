@@ -7,9 +7,8 @@ import simd
 final class Flight {
     /// The camera catches up at this rate, so the ship swings about the frame as it turns.
     private static let cameraCatchUp = 0.4
-    var lookAhead: Double
-    /// A slow wander, so the ship isn't always in the middle of the screen.
-    private static let wander = SIMD2<Double>(80, 45)
+    /// A slight, slow wander around the middle of the screen, so the ship doesn't look pinned there.
+    private static let wander = SIMD2<Double>(24, 14)
     private static let startClearance = 150.0
     private static let wanderRates = SIMD2<Double>(0.012, 0.017)
 
@@ -23,7 +22,6 @@ final class Flight {
     private(set) var turning = 0.0
 
     init(journey: Journey, viewWidth: Double) {
-        lookAhead = max(viewWidth, 1) * 0.2
         startedOn = journey
         leg = journey.leg
         tour = journey.makeTour()
@@ -31,7 +29,7 @@ final class Flight {
         // Just clear of the last planet reached, so the journey opens beside it.
         let start = SIMD2(first.position.x - max(first.radius + Self.startClearance, viewWidth * 0.42), first.cruiseHeight)
         ship = FlyingShip(position: start, heading: 0, speed: FlyingShip.topSpeed)
-        camera = start + SIMD2(lookAhead, 0)
+        camera = start
     }
 
     var journey: Journey { startedOn.reaching(leg: leg) }
@@ -44,16 +42,16 @@ final class Flight {
         elapsed += delta
         let before = ship.heading
         let place = tour.place(leg)
-        ship = ship.steppedOnRoute(tour, leg: leg, delta: delta)
+        // Straight over any meteors: the ship only changes height for the planets.
+        ship = ship.steppedLevel(towardHeight: place.cruiseHeight, remaining: place.position.x - ship.position.x, delta: delta)
         if delta > 0 {
             turning = min(abs(ship.heading - before) / (FlyingShip.turnRate * delta), 1)
         }
         if ship.position.x >= place.position.x {
             leg += 1
         }
-        let ahead = SIMD2(cos(ship.heading), sin(ship.heading)) * lookAhead
         let drift = SIMD2(sin(elapsed * Self.wanderRates.x), sin(elapsed * Self.wanderRates.y)) * Self.wander
-        let wanted = ship.position + ahead + drift
+        let wanted = ship.position + drift
         camera += (wanted - camera) * (1 - exp(-Self.cameraCatchUp * delta))
     }
 }

@@ -115,7 +115,6 @@ final class Renderer: NSObject, MTKViewDelegate {
         let space = SpaceColours.space
         pass.colorAttachments[0].clearColor = MTLClearColor(red: Double(space.x), green: Double(space.y), blue: Double(space.z), alpha: 1)
         clock += delta
-        flight.lookAhead = Double(screen.x / Self.artPixel) * 0.2
         let legBefore = flight.leg
         flight.advance(by: Double(delta) * flightSpeed)
         if remembersJourney, flight.leg != legBefore { JourneyStore.save(flight.journey) }
@@ -170,7 +169,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         let centre = (SIMD2<Float>(flight.ship.position - flight.camera) + artView / 2) * Self.artPixel
         let size = SIMD2(Float(rocketTexture.width), Float(rocketTexture.height))
         let heading = Float(flight.ship.heading)
-        let rocketPixel = Self.artPixel * 3
+        let rocketPixel = Self.artPixel * 2.5
         let flicker = Float(Int(clock / Self.flickerSeconds) % Self.flickerSteps)
         let burn = Self.flameLength + Float(flight.turning) * Self.turningFlame + flicker
         var flames = FlameParams(centre: centre, bounds: size * rocketPixel * 2,

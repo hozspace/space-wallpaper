@@ -14,7 +14,7 @@ public struct Journey: Codable, Sendable, Equatable {
     }
 
     public func makeTour() -> Tour {
-        Tour(seed: seed, minimumGap: spacing)
+        Tour(seed: seed, screenWidth: spacing)
     }
 
     public func reaching(leg newLeg: Int) -> Journey {

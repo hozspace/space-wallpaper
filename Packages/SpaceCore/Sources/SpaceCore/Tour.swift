@@ -14,9 +14,31 @@ public enum PlaceKind: Sendable, Hashable, CaseIterable {
 
     public static let planets = allCases.filter { $0 != .asteroid }
 
+    /// How often each kind comes up. Blue and white worlds are kept rarer, so they stand out.
+    var weight: Double {
+        switch self {
+        case .rocky, .desert, .gasGiant: 2
+        case .lava, .ringed: 1.5
+        case .earthLike: 1
+        case .ocean: 0.8
+        case .ice: 0.5
+        case .asteroid: 0
+        }
+    }
+
+    static func randomPlanet(using random: inout SeededRandom) -> PlaceKind {
+        var roll = Double.random(in: 0..<planets.reduce(0) { $0 + $1.weight }, using: &random)
+        for kind in planets {
+            roll -= kind.weight
+            if roll < 0 { return kind }
+        }
+        return .rocky
+    }
+
     public var colourSets: Int {
         switch self {
-        case .lava: 4
+        case .lava: 5
+        case .rocky, .desert, .gasGiant: 4
         default: 3
         }
     }
@@ -37,6 +59,7 @@ public struct Place: Sendable, Equatable {
     public let rotation: Double
     public let colourSet: Int
     public var cruiseHeight = 0.0
+    public var paint = PlanetPaint.preset
 
     public var reach: Double { radius * kind.reachScale }
 }
@@ -57,22 +80,29 @@ public struct Nebula: Sendable, Equatable {
     public let tint: Int
 }
 
-/// An endless line of hero planets made from a seed, far enough apart that one leaves as the next arrives.
+/// An endless line of hero planets made from a seed, mostly one at a time but sometimes two together.
 public final class Tour {
     public static let nebulaTints = 6
     private static let chanceOfNebula = 0.45
     private static let nebulaRadii: ClosedRange<Double> = 1300...2600
-    private static let gaps: ClosedRange<Double> = 1700...2100
+    /// Space between one place's reach and the next, in screen widths: sometimes two share the screen.
+    private static let gaps: ClosedRange<Double> = 0.45...1.15
     public static let smallestClearance = 40.0
     /// How far from its path a planet's edge sits, and how much the path's height changes per planet.
     private static let clearances: ClosedRange<Double> = 110...340
+    /// Some planets sit under the route instead, and the ship flies over them.
+    private static let chanceOfFlyover = 0.2
+    /// Huge worlds mostly lie under the route, so the ship crosses them.
+    private static let chanceOfHugeFlyover = 0.7
+    /// How far off the route a flyover planet's middle may be, as a share of its radius.
+    private static let flyoverOffsets: ClosedRange<Double> = 0...0.6
     private static let heightChanges: ClosedRange<Double> = -60...60
     private static let highestCruise = 150.0
     private static let mediumRadii: ClosedRange<Double> = 70...130
     private static let largeRadii: ClosedRange<Double> = 150...250
-    private static let hugeRadii: ClosedRange<Double> = 320...480
-    private static let chanceOfMedium = 0.45
-    private static let chanceOfLarge = 0.4
+    private static let hugeRadii: ClosedRange<Double> = 350...650
+    private static let chanceOfMedium = 0.4
+    private static let chanceOfLarge = 0.3
     /// A ring reaches three times its planet's width, so ringed worlds stay smaller.
     private static let ringedLargestRadius = 130.0
     private static let chanceOfRocks = 0.3
@@ -86,15 +116,16 @@ public final class Tour {
     private static let gapHalfLength = 80.0
     private static let fieldDrift = 100.0
     private static let gapHeightDrift = 120.0
-    private static let dodgeStart = 1000.0
+    /// The belt leans and drifts, so it needs this much clear space between planets.
+    private static let roomForRocks = 1400.0
 
-    private let minimumGap: Double
-    private let seed: UInt64
+    private let screenWidth: Double
+    let seed: UInt64
     private var random: SeededRandom
     private var known: [Place] = []
 
-    public init(seed: UInt64, minimumGap: Double = 1700) {
-        self.minimumGap = max(Self.gaps.lowerBound, minimumGap)
+    public init(seed: UInt64, screenWidth: Double = 1680) {
+        self.screenWidth = screenWidth
         self.seed = seed
         random = SeededRandom(seed: seed)
     }
@@ -111,6 +142,7 @@ public final class Tour {
         guard Double.random(in: 0..<1, using: &fieldRandom) < Self.chanceOfRocks else { return nil }
         let from = place(index)
         let to = place(index + 1)
+        guard to.position.x - to.reach - from.position.x - from.reach >= Self.roomForRocks else { return nil }
         let middle = (from.position.x + from.reach + to.position.x - to.reach) / 2
         let centre = SIMD2(
             middle + Double.random(in: -Self.fieldDrift...Self.fieldDrift, using: &fieldRandom),
@@ -138,15 +170,6 @@ public final class Tour {
         return RockField(centre: centre, radius: Self.beltHalfLength + Self.beltHalfWidth, rocks: rocks)
     }
 
-    /// The height the ship wants on the way to place `leg`, and whether it needs to get there now.
-    public func flightGoal(shipX: Double, leg: Int) -> (height: Double, isUrgent: Bool) {
-        let cruise = place(leg).cruiseHeight
-        guard let field = rockField(afterPlace: leg - 1), shipX > field.centre.x - Self.dodgeStart else { return (cruise, false) }
-        let farEdge = field.rocks.map { $0.position.x + $0.radius }.max() ?? field.centre.x
-        // Through the gap, then straight back to the route.
-        return (shipX < farEdge ? field.centre.y : cruise, true)
-    }
-
     public func nebula(afterPlace index: Int) -> Nebula? {
         var cloudRandom = SeededRandom(seed: seed &+ UInt64(index) &* 0x2000_0003 &+ 0x55)
         guard Double.random(in: 0..<1, using: &cloudRandom) < Self.chanceOfNebula else { return nil }
@@ -165,11 +188,13 @@ public final class Tour {
         let radius = nextRadius(for: kind)
         let cruise = min(max((known.last?.cruiseHeight ?? 0) + Double.random(in: Self.heightChanges, using: &random), -Self.highestCruise), Self.highestCruise)
         let side: Double = Bool.random(using: &random) ? 1 : -1
-        let height = cruise + side * (radius + Double.random(in: Self.clearances, using: &random))
+        let isFlyover = Double.random(in: 0..<1, using: &random) < (radius >= Self.hugeRadii.lowerBound ? Self.chanceOfHugeFlyover : Self.chanceOfFlyover)
+        let offset = isFlyover ? radius * Double.random(in: Self.flyoverOffsets, using: &random) : radius + Double.random(in: Self.clearances, using: &random)
+        let height = cruise + side * offset
         var across = 0.0
         if let last = known.last {
             let nextReach = radius * kind.reachScale
-            let gap = Double.random(in: minimumGap...(minimumGap + Self.gaps.upperBound - Self.gaps.lowerBound), using: &random)
+            let gap = screenWidth * Double.random(in: Self.gaps, using: &random)
             across = last.position.x + last.reach + nextReach + gap
         }
         let position = SIMD2(across, height)
@@ -178,14 +203,15 @@ public final class Tour {
             seed: Double.random(in: 1...9.99, using: &random),
             rotation: Double.random(in: 0..<(2 * .pi), using: &random),
             colourSet: colourSet,
-            cruiseHeight: cruise
+            cruiseHeight: cruise,
+            paint: PlanetPaint.random(using: &random)
         )
     }
 
     /// Never the same type and colour as the planet before.
     private func nextLook() -> (PlaceKind, Int) {
         while true {
-            let kind = PlaceKind.planets.randomElement(using: &random) ?? .rocky
+            let kind = PlaceKind.randomPlanet(using: &random)
             let colourSet = Int.random(in: 0..<kind.colourSets, using: &random)
             if known.last?.kind != kind || known.last?.colourSet != colourSet {
                 return (kind, colourSet)

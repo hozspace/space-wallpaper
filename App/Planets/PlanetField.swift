@@ -29,6 +29,9 @@ final class PlanetField {
     /// Room around the view, so planets exist before they drift into sight.
     private static let margin = 500.0
     private static let rockDepth = -2
+    private static let moonDepth = -3
+    /// Moons keep their planets' chunky pixels, however small they are.
+    private static let smallestMoonSurface = 8
 
     private let device: MTLDevice
     private let pipelines: PlanetPipelines
@@ -57,8 +60,8 @@ final class PlanetField {
         for (depthIndex, depth) in DistantPlanets.depths.enumerated() {
             let middle = camera * depth.parallax
             let reach = halfView + Self.margin
-            let low = ((middle - reach) / DistantPlanets.cellSize).rounded(.down)
-            let high = ((middle + reach) / DistantPlanets.cellSize).rounded(.down)
+            let low = ((middle - reach) / depth.cellSize).rounded(.down)
+            let high = ((middle + reach) / depth.cellSize).rounded(.down)
             for x in Int(low.x)...Int(high.x) {
                 for y in Int(low.y)...Int(high.y) {
                     guard let place = distant.planet(depth: depthIndex, cellX: x, cellY: y) else { continue }
@@ -85,14 +88,25 @@ final class PlanetField {
 
         for index in max(flight.leg - 2, 0)...(flight.leg + 1) {
             let place = flight.tour.place(index)
+            let moons = flight.tour.moons(of: index)
             let centre = place.position - camera + halfView
-            let reach = place.reach + Self.margin
+            let reach = moons.map(\.reach).reduce(place.reach, max) + Self.margin
             guard abs(centre.x - halfView.x) < halfView.x + reach,
                   abs(centre.y - halfView.y) < halfView.y + reach else { continue }
             let key = Key(depth: -1, a: index, b: 0)
-            guard let entry = entry(for: key, place: place) else { continue }
-            kept[key] = entry
-            shown.append(Visible(planet: entry.planet, centre: SIMD2<Float>(place.position - camera + halfView), brightness: 1))
+            guard let planetEntry = entry(for: key, place: place) else { continue }
+            kept[key] = planetEntry
+            var inFront: [Visible] = []
+            for moon in moons {
+                let moonKey = Key(depth: Self.moonDepth, a: index, b: moon.index)
+                guard let moonEntry = entry(for: moonKey, place: moon.world, smallestSurface: Self.smallestMoonSurface) else { continue }
+                kept[moonKey] = moonEntry
+                let (offset, isBehind) = moon.offset(at: Double(clock))
+                let visible = Visible(planet: moonEntry.planet, centre: SIMD2<Float>(centre + offset), brightness: 1)
+                if isBehind { shown.append(visible) } else { inFront.append(visible) }
+            }
+            shown.append(Visible(planet: planetEntry.planet, centre: SIMD2<Float>(centre), brightness: 1))
+            shown += inFront
         }
         entries = kept
         return shown
@@ -110,11 +124,11 @@ final class PlanetField {
         }
     }
 
-    private func entry(for key: Key, place: Place) -> Entry? {
+    private func entry(for key: Key, place: Place, smallestSurface: Int = PlanetTexture.smallestSurface) -> Entry? {
         if let existing = entries[key] {
             return existing
         }
-        guard let planet = PlanetMaker.make(place, size: Int(place.radius * 2), device: device, pipelines: pipelines) else {
+        guard let planet = PlanetMaker.make(place, size: Int(place.radius * 2), smallestSurface: smallestSurface, device: device, pipelines: pipelines) else {
             NSLog("SpaceWallpaper: could not make a planet texture")
             return nil
         }
@@ -124,7 +138,7 @@ final class PlanetField {
 
 enum PlanetMaker {
     @MainActor
-    static func make(_ place: Place, size: Int, device: MTLDevice, pipelines: PlanetPipelines) -> Planet? {
+    static func make(_ place: Place, size: Int, smallestSurface: Int, device: MTLDevice, pipelines: PlanetPipelines) -> Planet? {
         let seed = Float(place.seed)
         if place.kind == .asteroid {
             return Asteroid(device: device, pipelines: pipelines, size: size, seed: seed, rotation: Float(place.rotation), colourSet: place.colourSet)
@@ -132,8 +146,10 @@ enum PlanetMaker {
         if place.kind == .ringed {
             // Rings read best close to level.
             let tilt = -0.25 - Float(place.rotation / (2 * .pi)) * 0.2
-            return RingedPlanet(device: device, pipelines: pipelines, size: size, seed: seed, rotation: tilt, colourSet: place.colourSet)
+            return RingedPlanet(device: device, pipelines: pipelines, size: size, seed: seed, rotation: tilt, colourSet: place.colourSet, paint: place.paint)
         }
-        return LayeredPlanet(kind: place.kind, device: device, pipelines: pipelines, size: size, seed: seed, rotation: Float(place.rotation), colourSet: place.colourSet)
+        // Turning about a nearly upright axis, the way a planet spins, rather than any old way.
+        let tilt = (Float(place.rotation / (2 * .pi)) - 0.5) * 0.7
+        return LayeredPlanet(kind: place.kind, device: device, pipelines: pipelines, size: size, smallestSurface: smallestSurface, seed: seed, rotation: tilt, colourSet: place.colourSet, paint: place.paint)
     }
 }

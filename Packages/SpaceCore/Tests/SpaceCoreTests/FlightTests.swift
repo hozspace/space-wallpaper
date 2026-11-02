@@ -65,22 +65,44 @@ private let frame = 1.0 / 30.0
         #expect(places.contains { $0.radius < 150 })
     }
 
-    @Test func onlyOneHeroFitsOnScreenAtATime() {
-        let tour = Tour(seed: 18)
+    @Test func planetsSometimesShareTheScreen() {
         let screenWidth = 1680.0
-        for i in 0..<200 {
-            let a = tour.place(i)
-            let b = tour.place(i + 1)
-            #expect(simd_distance(a.position, b.position) - a.radius - b.radius >= screenWidth)
+        let tour = Tour(seed: 18, screenWidth: screenWidth)
+        let gaps = (0..<200).map { i -> Double in
+            let a = tour.place(i), b = tour.place(i + 1)
+            return b.position.x - a.position.x - a.reach - b.reach
+        }
+        #expect(gaps.allSatisfy { $0 >= screenWidth * 0.45 - 0.00001 })
+        #expect(gaps.contains { $0 < screenWidth * 0.8 })
+        #expect(gaps.contains { $0 > screenWidth })
+    }
+
+    @Test func someOnTheRouteAndTheRestOnBothSides() {
+        let tour = Tour(seed: 26)
+        let offsets = (1..<300).map { tour.place($0) }.map { ($0.position.y - $0.cruiseHeight) / $0.radius }
+        let under = offsets.filter { abs($0) < 1 }.count
+        #expect(under > 60 && under < 130)
+        #expect(offsets.filter { $0 >= 1 }.count > 60)
+        #expect(offsets.filter { $0 <= -1 }.count > 60)
+    }
+
+    @Test func rocksOnlyWhereThereIsRoomForThem() {
+        let tour = Tour(seed: 31)
+        for i in 1..<200 {
+            guard let field = tour.rockField(afterPlace: i) else { continue }
+            let a = tour.place(i), b = tour.place(i + 1)
+            #expect(field.rocks.allSatisfy { $0.position.x - $0.radius > a.position.x + a.reach && $0.position.x + $0.radius < b.position.x - b.reach })
         }
     }
 
-    @Test func evenRingedWorldsHaveAFullDisplayOfSpaceBetweenThem() {
-        for width in [1280.0, 1680, 2560] {
-            let tour = Tour(seed: 81, minimumGap: width)
-            for i in 0..<100 {
-                let a = tour.place(i), b = tour.place(i + 1)
-                #expect(b.position.x - a.position.x - a.reach - b.reach >= width - 0.00001)
+    @Test func moonsKeepToTheirOwnPlanet() {
+        let tour = Tour(seed: 44)
+        for i in 1..<200 {
+            let planet = tour.place(i)
+            let before = tour.place(i - 1), after = tour.place(i + 1)
+            for moon in tour.moons(of: i) {
+                #expect(planet.position.x - moon.reach > before.position.x + before.reach)
+                #expect(planet.position.x + moon.reach < after.position.x - after.reach)
             }
         }
     }
@@ -132,16 +154,19 @@ private let frame = 1.0 / 30.0
         let far = (0..<400).compactMap { sky.planet(depth: 0, cellX: $0, cellY: 1) }
         #expect(!far.isEmpty)
         #expect(far.allSatisfy { $0.radius <= 24 })
-        #expect(DistantPlanets.depths.allSatisfy { $0.parallax > 0 && $0.parallax < 0.25 })
+        #expect(DistantPlanets.depths.allSatisfy { $0.parallax > 0 && $0.parallax < 1 })
+        #expect(DistantPlanets.depths.map(\.parallax) == DistantPlanets.depths.map(\.parallax).sorted())
     }
 
     @Test func aPlanetStaysInsideItsCell() {
         let sky = DistantPlanets(seed: 2)
-        let size = DistantPlanets.cellSize
-        for x in 0..<100 {
-            guard let planet = sky.planet(depth: 0, cellX: x, cellY: 7) else { continue }
-            #expect(planet.position.x >= Double(x) * size && planet.position.x < Double(x + 1) * size)
-            #expect(planet.position.y >= 7 * size && planet.position.y < 8 * size)
+        for (depth, spec) in DistantPlanets.depths.enumerated() {
+            let size = spec.cellSize
+            for x in 0..<100 {
+                guard let planet = sky.planet(depth: depth, cellX: x, cellY: 7) else { continue }
+                #expect(planet.position.x >= Double(x) * size && planet.position.x < Double(x + 1) * size)
+                #expect(planet.position.y >= 7 * size && planet.position.y < 8 * size)
+            }
         }
     }
 }
@@ -238,7 +263,7 @@ private let frame = 1.0 / 30.0
 }
 
 @Suite struct PassingPlanetsTests {
-    @Test func theShipPassesEveryPlanetWithoutCrossingIt() {
+    @Test func theShipPassesBesideEveryPlanetNotUnderItWithoutCrossingIt() {
         for seed in [UInt64(71), 72, 73] {
             let tour = Tour(seed: seed)
             var ship = FlyingShip(position: SIMD2(tour.place(0).position.x, tour.place(0).cruiseHeight), heading: 0, speed: FlyingShip.topSpeed)
@@ -246,7 +271,7 @@ private let frame = 1.0 / 30.0
                 let place = tour.place(leg)
                 while ship.position.x < place.position.x {
                     ship = ship.steppedLevel(towardHeight: place.cruiseHeight, remaining: place.position.x - ship.position.x, delta: 1.0 / 30.0)
-                    for near in [tour.place(leg - 1), place] {
+                    for near in [tour.place(leg - 1), place] where abs(near.position.y - near.cruiseHeight) >= near.radius {
                         #expect(simd_distance(ship.position, near.position) > near.radius + Tour.smallestClearance)
                     }
                 }
@@ -262,58 +287,7 @@ private let frame = 1.0 / 30.0
     }
 }
 
-private func flyLeg(_ leg: Int, on tour: Tour, from start: FlyingShip, each: (FlyingShip) -> Void) -> FlyingShip {
-    var ship = start
-    let place = tour.place(leg)
-    while ship.position.x < place.position.x {
-        ship = ship.steppedOnRoute(tour, leg: leg, delta: 1.0 / 30.0)
-        each(ship)
-    }
-    return ship
-}
-
 @Suite struct MeteorTests {
-    @Test func theShipFliesRoundEveryBelt() {
-        for seed in [UInt64(81), 82, 83] {
-            let tour = Tour(seed: seed)
-            var ship = FlyingShip(position: SIMD2(tour.place(0).position.x, tour.place(0).cruiseHeight), heading: 0, speed: FlyingShip.topSpeed)
-            for leg in 1...60 {
-                let belt = tour.rockField(afterPlace: leg - 1)
-                ship = flyLeg(leg, on: tour, from: ship) { ship in
-                    guard let belt else { return }
-                    for rock in belt.rocks {
-                        #expect(simd_distance(ship.position, rock.position) > rock.radius)
-                    }
-                }
-            }
-        }
-    }
-
-    @Test func dodgingDoesNotPutTheShipIntoPlanets() {
-        for seed in [UInt64(84), 85] {
-            let tour = Tour(seed: seed)
-            var ship = FlyingShip(position: SIMD2(tour.place(0).position.x, tour.place(0).cruiseHeight), heading: 0, speed: FlyingShip.topSpeed)
-            for leg in 1...60 {
-                let place = tour.place(leg)
-                ship = flyLeg(leg, on: tour, from: ship) { ship in
-                    #expect(simd_distance(ship.position, place.position) > place.radius + Tour.smallestClearance)
-                }
-            }
-        }
-    }
-
-    @Test func theShipActuallyMovesAsideForABelt() throws {
-        let tour = Tour(seed: 86)
-        var ship = FlyingShip(position: SIMD2(tour.place(0).position.x, tour.place(0).cruiseHeight), heading: 0, speed: FlyingShip.topSpeed)
-        var dodges = 0
-        for leg in 1...40 {
-            var steepest = 0.0
-            ship = flyLeg(leg, on: tour, from: ship) { steepest = max(steepest, abs($0.heading)) }
-            if tour.rockField(afterPlace: leg - 1) != nil, steepest > FlyingShip.steepestClimb { dodges += 1 }
-        }
-        #expect(dodges > 0)
-    }
-
     @Test func aBeltIsALongBandAcrossTheRoute() throws {
         let tour = Tour(seed: 87)
         let belt = try #require((0..<60).lazy.compactMap { tour.rockField(afterPlace: $0) }.first)
@@ -349,5 +323,117 @@ private func flyLeg(_ leg: Int, on tour: Tour, from start: FlyingShip, each: (Fl
             #expect(simd_distance(belt.centre, tour.place(index).position) > belt.radius + tour.place(index).reach)
             #expect(simd_distance(belt.centre, tour.place(index + 1).position) > belt.radius + tour.place(index + 1).reach)
         }
+    }
+}
+
+@Suite struct MoonTests {
+    @Test func someWorldsHaveMoonsAndRingedOnesNever() {
+        let tour = Tour(seed: 12)
+        let counts = (1..<80).map { tour.moons(of: $0).count }
+        #expect(counts.contains { $0 > 0 })
+        #expect(counts.contains(0))
+        for i in 1..<80 where tour.place(i).kind == .ringed {
+            #expect(tour.moons(of: i).isEmpty)
+        }
+    }
+
+    @Test func moonsStayClearOfTheShipsPath() {
+        let tour = Tour(seed: 3)
+        for i in 1..<80 {
+            let planet = tour.place(i)
+            guard abs(planet.position.y - planet.cruiseHeight) >= planet.radius else { continue }
+            for moon in tour.moons(of: i) {
+                for second in stride(from: 0.0, to: abs(moon.period), by: 1) {
+                    let centre = planet.position + moon.offset(at: second).position
+                    #expect(abs(centre.y - planet.cruiseHeight) - moon.radius >= Tour.moonClearance)
+                }
+            }
+        }
+    }
+
+    @Test func moonsGoBehindOnTheFarSide() {
+        let moon = Moon(index: 0, kind: .rocky, radius: 10, seed: 1, colourSet: 0, paint: .preset, orbit: 100, flatness: 0.3, tilt: 0, period: 40, phase: 0)
+        let far = moon.offset(at: 30)
+        let near = moon.offset(at: 10)
+        #expect(far.isBehind && far.position.y < 0)
+        #expect(!near.isBehind && near.position.y > 0)
+    }
+
+    @Test func secondMoonOrbitsOutsideTheFirst() {
+        let tour = Tour(seed: 21)
+        for i in 1..<120 {
+            let moons = tour.moons(of: i)
+            guard moons.count == 2 else { continue }
+            #expect(moons[1].orbit - moons[1].radius > moons[0].orbit + moons[0].radius)
+        }
+    }
+}
+
+@Suite struct MoonLookTests {
+    @Test func warmWorldsNeverGetIcyMoons() {
+        let tour = Tour(seed: 5)
+        for i in 1..<150 where Tone(kind: tour.place(i).kind, colourSet: tour.place(i).colourSet) == .warm {
+            #expect(tour.moons(of: i).allSatisfy { $0.kind != .ice && $0.kind != .lava })
+        }
+    }
+
+    @Test func blueAndWhiteWorldsAreTheMinority() {
+        let tour = Tour(seed: 9)
+        let cool = (0..<300).filter { [.ocean, .earthLike, .ice].contains(tour.place($0).kind) }.count
+        #expect(cool < 90)
+    }
+}
+
+@Suite struct PaintTests {
+    private static let layout: [PlaceKind: Int] = [
+        .rocky: 5, .desert: 5, .lava: 8, .ocean: 11, .earthLike: 10, .ice: 10, .gasGiant: 8, .ringed: 6,
+    ]
+
+    @Test func madeUpPalettesFitEachKindsShaders() {
+        for (kind, count) in Self.layout {
+            for seed in UInt64(0)..<50 {
+                let colours = PlanetPaint.generated(seed: seed).colours(for: kind) ?? []
+                #expect(colours.count == count)
+                #expect(colours.allSatisfy { all($0 .>= 0) && all($0 .<= 1) && HSV($0).saturation <= 0.72 + 0.0001 })
+            }
+        }
+    }
+
+    @Test func aWorldsColoursStayCloseInHue() {
+        for kind in Self.layout.keys {
+            for seed in UInt64(0)..<50 {
+                let colours = PlanetPaint.generated(seed: seed).colours(for: kind) ?? []
+                let main = HSV(colours[0]).hue
+                #expect(colours.allSatisfy { HSV($0).saturation < 0.02 || abs(PlanetPaint.hueOffset(from: main, to: HSV($0).hue)) <= PlanetPaint.widestHueSpread + 0.001 })
+            }
+        }
+    }
+
+    @Test func eachKindKeepsToItsColourRange() {
+        for kind in Self.layout.keys {
+            for seed in UInt64(0)..<50 {
+                let main = PlanetPaint.generated(seed: seed).colours(for: kind)![0]
+                #expect(HSV(main).saturation < 0.02 || kind.hueRange.contains(HSV(main).hue))
+            }
+        }
+    }
+
+    @Test func sameSeedSamePalette() {
+        #expect(PlanetPaint.generated(seed: 7).colours(for: .desert) == PlanetPaint.generated(seed: 7).colours(for: .desert))
+        #expect(PlanetPaint.generated(seed: 7).colours(for: .desert) != PlanetPaint.generated(seed: 8).colours(for: .desert))
+    }
+
+    @Test func mostWorldsGetTheirOwnColours() {
+        let tour = Tour(seed: 3)
+        let paints = (0..<300).map { tour.place($0).paint }
+        let generated = paints.filter { if case .generated = $0 { true } else { false } }.count
+        let preset = paints.filter { $0 == .preset }.count
+        #expect(generated > 140 && generated < 220)
+        #expect(preset > 20 && preset < 110)
+    }
+
+    @Test func hueSurvivesTheRoundTrip() {
+        let colour = SIMD3<Double>(0.8, 0.3, 0.6)
+        #expect(simd_distance(HSV(colour).rgb, colour) < 0.0001)
     }
 }

@@ -61,7 +61,7 @@ static float gas_circle(float2 uv, float seed) {
 static float gas_turbulence(float2 uv, float time, float seed) {
     float total = 0.0;
     for (int i = 0; i < turbulenceSteps; i++) {
-        total += gas_circle((uv * gasSize * 0.3) + (float(i + 1) + 10.0) + float2(time, 0.0), seed);
+        total += gas_circle((uv * gasSize * 0.3) + (float(i + 1) + 10.0) + float2(time * 0.3, 0.0), seed);
     }
     return total;
 }
@@ -83,8 +83,9 @@ fragment float4 ringed_gas_fragment(PlanetVertexOut in [[stage_in]], constant Ri
     uv = gas_spherify(uv);
 
     float band = ringed_fbm(float2(0.0, uv.y * gasSize * gasBands), gasSize, gasOctaves, p.seed);
-    float turb = gas_turbulence(uv, p.time, p.seed);
-    float fbm1 = ringed_fbm(uv * gasSize, gasSize, gasOctaves, p.seed);
+    // Everything slides together, so the surface turns without churning.
+    float turb = gas_turbulence(uv, -p.time, p.seed);
+    float fbm1 = ringed_fbm(uv * gasSize + float2(-p.time, 0.0), gasSize, gasOctaves, p.seed);
     float fbm2 = ringed_fbm(uv * float2(1.0, 2.0) * gasSize + fbm1 + float2(-p.time, 0.0) + turb, gasSize, gasOctaves, p.seed);
 
     fbm2 *= pow(band, 2.0) * 7.0;

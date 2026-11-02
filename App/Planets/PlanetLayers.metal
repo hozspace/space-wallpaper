@@ -10,7 +10,7 @@ fragment float4 ground_fragment(PlanetVertexOut in [[stage_in]], constant Planet
     bool dith = dither_at(uv, in.uv, p.pixels);
     uv = planet_rotate(uv, p.rotation);
 
-    float fbm1 = noise_fbm(uv, n);
+    float fbm1 = noise_fbm(uv + float2(p.time / p.size, 0.0), n);
     dLight += noise_fbm(uv * p.size + fbm1 + float2(p.time, 0.0), n) * 0.3;
 
     float border = (1.0 / p.pixels) * p.ditherSize;
@@ -250,7 +250,7 @@ fragment float4 clouds_fragment(PlanetVertexOut in [[stage_in]], constant Planet
     float2 stretched = uv * float2(1.0, p.stretch);
     float turbulence = 0.0;
     for (int i = 0; i < cloudSteps; i++) {
-        turbulence += cloud_circle((stretched * p.size * 0.3) + (float(i + 1) + 10.0) + float2(p.time, 0.0), n);
+        turbulence += cloud_circle((stretched * p.size * 0.3) + (float(i + 1) + 10.0) + float2(p.time * 0.3, 0.0), n);
     }
     float c = noise_fbm(stretched * p.size + turbulence + float2(p.time, 0.0), n);
 

@@ -1,4 +1,6 @@
 import Metal
+import SpaceCore
+import simd
 
 /// A world baked into a small surface texture and enlarged with nearest-neighbour sampling.
 @MainActor
@@ -6,6 +8,7 @@ protocol Planet: AnyObject {
     var texture: MTLTexture { get }
     /// Width on screen in art pixels; the texture behind it can be smaller.
     var displaySize: Float { get }
+    /// Surface pixels turned a second; radians a second for anything tumbling.
     var pace: Float { get }
     func draw(into buffer: MTLCommandBuffer, time: Float)
     /// Painted once and turned whole, rather than repainted as time passes.
@@ -17,7 +20,9 @@ extension Planet {
 }
 
 enum PlanetTexture {
-    static func surfaceSize(for displaySize: Int) -> Int { max(24, (displaySize + 2) / 3) }
+    static let smallestSurface = 24
+
+    static func surfaceSize(for displaySize: Int, smallest: Int = smallestSurface) -> Int { max(smallest, (displaySize + 2) / 3) }
 
     static func make(device: MTLDevice, size: Int) -> MTLTexture? {
         make(device: device, width: size, height: size)
@@ -78,5 +83,16 @@ struct PlanetPipelines {
         self.ringedRing = ringedRing
         self.tidySpecks = tidySpecks
         self.asteroid = asteroid
+    }
+}
+
+enum PlanetColours {
+    /// A planet's colours: made up from scratch, its preset turned within its kind's range, or the preset itself.
+    static func resolve(_ preset: [Int], kind: PlaceKind, paint: PlanetPaint) -> [SIMD4<Float>] {
+        if let made = paint.colours(for: kind) {
+            return made.map { SIMD4(SIMD3<Float>($0), 1) }
+        }
+        let colours = Palette.colours(preset).map { SIMD3<Double>(SIMD3<Float>($0.x, $0.y, $0.z)) }
+        return paint.turned(colours, for: kind).map { SIMD4(SIMD3<Float>($0), 1) }
     }
 }

@@ -12,11 +12,8 @@ public struct FlyingShip: Sendable, Equatable {
     public static let acceleration = 4.0
     public static let turnRate = 0.28
     public static let steepestClimb = 0.16
-    public static let steepestDodge = 0.45
     public static let climbDistance = 700.0
     private static let levelLookAhead = 500.0
-    // A far aim point only ever eases towards a height; a dodge has to get there.
-    private static let dodgeLookAhead = 150.0
 
     public let position: SIMD2<Double>
     public let heading: Double
@@ -32,14 +29,6 @@ public struct FlyingShip: Sendable, Equatable {
     public func steppedLevel(towardHeight height: Double, remaining: Double, delta: Double) -> FlyingShip {
         let wanted = remaining < Self.climbDistance ? height : position.y
         return stepped(towardHeight: wanted, steepest: Self.steepestClimb, lookAhead: Self.levelLookAhead, delta: delta)
-    }
-
-    public func steppedOnRoute(_ tour: Tour, leg: Int, delta: Double) -> FlyingShip {
-        let goal = tour.flightGoal(shipX: position.x, leg: leg)
-        if goal.isUrgent {
-            return stepped(towardHeight: goal.height, steepest: Self.steepestDodge, lookAhead: Self.dodgeLookAhead, delta: delta)
-        }
-        return steppedLevel(towardHeight: goal.height, remaining: tour.place(leg).position.x - position.x, delta: delta)
     }
 
     public func stepped(toward target: SIMD2<Double>, delta: Double) -> FlyingShip {

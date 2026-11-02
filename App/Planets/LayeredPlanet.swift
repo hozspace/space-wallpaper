@@ -12,6 +12,9 @@ enum LayerShader: String, CaseIterable {
     case lavaRivers = "lava_rivers_fragment"
     case lakes = "lakes_fragment"
     case clouds = "clouds_fragment"
+
+    /// Noise moved per surface pixel, relative to the layer's size. Wrapped layers move half as far.
+    var slidePerPixel: Float { self == .ground ? 1 : 0.5 }
 }
 
 struct PlanetLayerParams {
@@ -30,7 +33,7 @@ struct PlanetLayerParams {
     var colours: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>)
 }
 
-/// One layer as PixelPlanets sets it up. `speed` is its script's update_time multiplier.
+/// One layer as PixelPlanets sets it up. `speed` is its script's update_time multiplier, relative to `baseSpeed`.
 private struct LayerRecipe {
     let shader: LayerShader
     let size: Float
@@ -46,7 +49,8 @@ private struct LayerRecipe {
 }
 
 private struct PlanetRecipe {
-    let pace: Float
+    /// Seconds for a feature in the middle to turn round to the edge, whatever the planet's size.
+    let turnSeconds: Float
     let colourSets: [[Int]]
     let layers: [LayerRecipe]
 }
@@ -58,8 +62,8 @@ final class LayeredPlanet: Planet {
         switch kind {
         case .rocky:
             return PlanetRecipe(
-                pace: 0.005,
-                colourSets: [[7, 5, 4, 5, 4], [19, 18, 17, 18, 17], [10, 11, 12, 11, 12]],
+                turnSeconds: 45,
+                colourSets: [[7, 5, 4, 5, 4], [19, 18, 17, 18, 17], [10, 11, 12, 11, 12], [55, 54, 53, 54, 53]],
                 layers: [
                     LayerRecipe(shader: .ground, size: 8, octaves: 4, speed: 0.02, border1: 0.615, border2: 0.729, ditherSize: 1, colours: 0..<3),
                     LayerRecipe(shader: .craters, size: 5, octaves: 0, speed: 0.02, border1: 0.465, colours: 3..<5),
@@ -67,18 +71,19 @@ final class LayeredPlanet: Planet {
             )
         case .desert:
             return PlanetRecipe(
-                pace: 0.01,
-                colourSets: [[22, 21, 20, 19, 18], [25, 26, 27, 62, 63], [24, 21, 20, 19, 17]],
+                turnSeconds: 40,
+                colourSets: [[22, 21, 20, 19, 18], [25, 26, 27, 62, 63], [24, 21, 20, 19, 17], [46, 58, 57, 54, 53]],
                 layers: [LayerRecipe(shader: .dry, size: 8, octaves: 3, speed: 0.02, border1: 0.362, border2: 0.525, colours: 0..<5)]
             )
         case .lava:
             return PlanetRecipe(
-                pace: 0.08,
+                turnSeconds: 40,
                 colourSets: [
                     [19, 18, 17, 18, 17, 31, 29, 26],
                     [62, 63, 16, 63, 16, 28, 60, 61],
                     [20, 19, 18, 19, 18, 30, 25, 27],
                     [4, 3, 2, 3, 2, 29, 26, 62],
+                    [53, 16, 15, 16, 15, 47, 56, 55],
                 ],
                 layers: [
                     LayerRecipe(shader: .ground, size: 10, octaves: 3, speed: 0.02, border1: 0.4, border2: 0.6, ditherSize: 1, colours: 0..<3),
@@ -89,7 +94,7 @@ final class LayeredPlanet: Planet {
             )
         case .ocean:
             return PlanetRecipe(
-                pace: 0.017,
+                turnSeconds: 35,
                 colourSets: [
                     [42, 41, 40, 22, 35, 36, 37, 8, 9, 10, 12],
                     [43, 42, 39, 24, 34, 36, 38, 8, 9, 10, 12],
@@ -104,7 +109,7 @@ final class LayeredPlanet: Planet {
             )
         case .earthLike:
             return PlanetRecipe(
-                pace: 0.017,
+                turnSeconds: 35,
                 colourSets: [
                     [34, 35, 36, 37, 42, 40, 8, 9, 10, 12],
                     [35, 36, 37, 38, 41, 39, 8, 9, 10, 12],
@@ -117,7 +122,7 @@ final class LayeredPlanet: Planet {
             )
         case .ice:
             return PlanetRecipe(
-                pace: 0.008,
+                turnSeconds: 45,
                 colourSets: [
                     [8, 9, 10, 45, 43, 41, 8, 9, 10, 11],
                     [9, 10, 11, 42, 41, 40, 9, 10, 11, 12],
@@ -131,11 +136,12 @@ final class LayeredPlanet: Planet {
             )
         case .gasGiant:
             return PlanetRecipe(
-                pace: 0.04,
+                turnSeconds: 28,
                 colourSets: [
                     [17, 17, 16, 16, 24, 20, 19, 18],
                     [13, 13, 14, 14, 9, 10, 11, 12],
                     [53, 53, 15, 15, 56, 55, 54, 53],
+                    [57, 57, 54, 54, 46, 58, 57, 54],
                 ],
                 layers: [
                     LayerRecipe(shader: .clouds, size: 9, octaves: 5, speed: 0.005, border1: 0.692, border2: 0.666, colours: 0..<4),
@@ -159,16 +165,17 @@ final class LayeredPlanet: Planet {
     private let seed: Float
     private let light = SIMD2<Float>(0.39, 0.39)
 
-    init?(kind: PlaceKind, device: MTLDevice, pipelines: PlanetPipelines, size: Int, seed: Float, rotation: Float, colourSet: Int) {
-        guard let recipe = Self.recipe(for: kind), let texture = PlanetTexture.make(device: device, size: PlanetTexture.surfaceSize(for: size)),
+    init?(kind: PlaceKind, device: MTLDevice, pipelines: PlanetPipelines, size: Int, smallestSurface: Int, seed: Float, rotation: Float, colourSet: Int, paint: PlanetPaint) {
+        let surface = PlanetTexture.surfaceSize(for: size, smallest: smallestSurface)
+        guard let recipe = Self.recipe(for: kind), let texture = PlanetTexture.make(device: device, size: surface),
               let painted = PlanetTexture.make(device: device, size: texture.width) else { return nil }
         self.texture = texture
         self.painted = painted
         displaySize = Float(size)
         self.pipelines = pipelines
-        pace = recipe.pace
+        pace = Float(surface) / 2 / recipe.turnSeconds
         layers = recipe.layers
-        colours = Palette.colours(recipe.colourSets[colourSet % recipe.colourSets.count])
+        colours = PlanetColours.resolve(recipe.colourSets[colourSet % recipe.colourSets.count], kind: kind, paint: paint)
         pixels = Float(texture.width)
         self.seed = seed
         self.rotation = rotation
@@ -191,9 +198,11 @@ final class LayeredPlanet: Planet {
         let own = Array(colours[layer.colours]) + Array(repeating: SIMD4<Float>.zero, count: 6 - layer.colours.count)
         // Stands in for PixelPlanets' random cloud cover, so a planet always looks the same.
         let pick = (seed * Self.coverSpread).truncatingRemainder(dividingBy: 1)
+        // Whole surface pixels, so the planet turns in steps instead of its edges crawling.
+        let turned = (time * layer.speed / Self.baseSpeed).rounded(.down)
         return PlanetLayerParams(
             pixels: pixels, rotation: rotation, light: light,
-            time: time * layer.size.rounded() * 2 * layer.speed,
+            time: turned * layer.size * layer.shader.slidePerPixel / pixels,
             seed: seed, size: layer.size, border1: layer.border1, border2: layer.border2,
             cutoff: layer.cutoff.lowerBound + (layer.cutoff.upperBound - layer.cutoff.lowerBound) * pick,
             stretch: layer.stretch, ditherSize: layer.ditherSize, octaves: layer.octaves,
@@ -202,4 +211,5 @@ final class LayeredPlanet: Planet {
     }
 
     private static let coverSpread: Float = 7.31
+    private static let baseSpeed: Float = 0.02
 }
