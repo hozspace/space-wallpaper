@@ -14,6 +14,8 @@ final class Renderer: NSObject, MTKViewDelegate {
     private static let turningFlame: Float = 3
     private static let flickerSeconds: Float = 0.12
     private static let flickerSteps = 3
+    /// Radians of tilt still drawn as level.
+    private static let levelEnough = 0.035
 
     private let commandQueue: MTLCommandQueue
     private let spritePipeline: MTLRenderPipelineState
@@ -166,10 +168,15 @@ final class Renderer: NSObject, MTKViewDelegate {
     }
 
     private func drawRocket(with encoder: MTLRenderCommandEncoder, screen: SIMD2<Float>, artView: SIMD2<Float>) {
-        let centre = (SIMD2<Float>(flight.ship.position - flight.camera) + artView / 2) * Self.artPixel
         let size = SIMD2(Float(rocketTexture.width), Float(rocketTexture.height))
-        let heading = Float(flight.ship.heading)
         let rocketPixel = Self.artPixel * 2.5
+        // A hair's tilt only puts a one-pixel step in one side, so nearly level is drawn level,
+        // and a level ship sits on whole screen pixels so both halves come out the same.
+        let isLevel = abs(flight.ship.heading) < Self.levelEnough
+        let heading = isLevel ? 0 : Float(flight.ship.heading)
+        let exact = (SIMD2<Float>(flight.ship.position - flight.camera) + artView / 2) * Self.artPixel
+        let half = size * rocketPixel / 2
+        let centre = isLevel ? (exact - half).rounded(.toNearestOrAwayFromZero) + half : exact
         let flicker = Float(Int(clock / Self.flickerSeconds) % Self.flickerSteps)
         let burn = Self.flameLength + Float(flight.turning) * Self.turningFlame + flicker
         var flames = FlameParams(centre: centre, bounds: size * rocketPixel * 2,
