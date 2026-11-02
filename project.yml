@@ -1,0 +1,49 @@
+name: SpaceWallpaper
+options:
+  bundleIdPrefix: com.hozspace
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    # Signed to run locally. Set DEVELOPMENT_TEAM to sign with your own account.
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_STYLE: Manual
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+
+packages:
+  SpaceCore:
+    path: Packages/SpaceCore
+
+targets:
+  SpaceWallpaper:
+    type: application
+    platform: macOS
+    sources:
+      - App
+    dependencies:
+      - package: SpaceCore
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: Space Wallpaper
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSApplicationCategoryType: public.app-category.graphics-design
+        # Lives behind the desktop and in the menu bar: no Dock icon.
+        LSUIElement: true
+        NSHumanReadableCopyright: "© 2026 hozspace"
+        ITSAppUsesNonExemptEncryption: false
+    entitlements:
+      path: App/SpaceWallpaper.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.hozspace.SpaceWallpaper
+        ENABLE_HARDENED_RUNTIME: YES
+        GENERATE_INFOPLIST_FILE: NO
